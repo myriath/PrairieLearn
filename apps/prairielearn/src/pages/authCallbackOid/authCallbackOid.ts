@@ -20,7 +20,7 @@ function authenticate(req, res): Promise<any> {
         if (err) {
           reject(err);
         } else if (!user) {
-          reject(new Error("Login failed"));
+          reject(new Error("Login failed: " + req.query.error_description));
         } else {
           resolve(user);
         }

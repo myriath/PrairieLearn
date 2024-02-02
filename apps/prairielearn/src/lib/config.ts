@@ -271,7 +271,7 @@ const ConfigSchema = z.object({
   oidClientSecret: z.string().nullable().default(null),
   oidRedirectUrl: z.string().nullable().default(null),
   /**
-   * OID uid, name, and uin keys are defaults for Okta authentication
+   * OID uid, name, and uin keys defaults are for Okta authentication
    */
   oidUidKey: z.string().default("username"),
   oidNameKey: z.string().default("displayName"),
