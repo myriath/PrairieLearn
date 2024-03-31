@@ -1,19 +1,13 @@
-import detectMocha from 'detect-mocha';
-
 import * as error from '@prairielearn/error';
 import { config } from './config';
 import { logger } from '@prairielearn/logger';
 import fetch, { Response } from 'node-fetch';
 
 export function canSendMessages(): boolean {
-  return detectMocha() || !!config.secretSlackOpsBotEndpoint;
+  return !!config.secretSlackOpsBotEndpoint;
 }
 
 export async function sendMessage(msg: string): Promise<null | Response> {
-  if (detectMocha()) {
-    return new Response('Dummy test body', { status: 200, statusText: 'OK' });
-  }
-
   // No-op if there's no url specified
   if (!config.secretSlackOpsBotEndpoint) {
     return null;
@@ -52,16 +46,12 @@ export async function sendSlackMessage(
     return null;
   }
 
-  if (detectMocha()) {
-    return new Response('Dummy test body', { status: 200, statusText: 'OK' });
-  }
-
   const response = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({
       text: msg,
-      channel: channel,
+      channel,
       as_user: true,
     }),
   });

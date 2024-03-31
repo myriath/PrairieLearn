@@ -1,3 +1,4 @@
+// @ts-check
 const _ = require('lodash');
 const asyncHandler = require('express-async-handler');
 const path = require('path');
@@ -5,7 +6,7 @@ const debug = require('debug')('prairielearn:' + path.basename(__filename, '.js'
 
 const { parseISO, isValid } = require('date-fns');
 const { config } = require('../lib/config');
-const error = require('@prairielearn/error');
+const { AugmentedError, HttpStatusError } = require('@prairielearn/error');
 const sqldb = require('@prairielearn/postgres');
 const { html } = require('@prairielearn/html');
 const { idsEqual } = require('../lib/id');
@@ -35,19 +36,20 @@ module.exports = asyncHandler(async (req, res, next) => {
   };
 
   if (params.course_id == null && params.course_instance_id == null) {
-    throw error.make(403, 'Access denied (both course_id and course_instance_id are null)');
+    throw new HttpStatusError(
+      403,
+      'Access denied (both course_id and course_instance_id are null)',
+    );
   }
 
   const result = await sqldb.queryZeroOrOneRowAsync(sql.select_authz_data, params);
   if (result.rowCount === 0) {
-    throw error.make(403, 'Access denied');
+    throw new HttpStatusError(403, 'Access denied');
   }
 
   // Now that we know the user has access, parse the authz data
   res.locals.course = result.rows[0].course;
   res.locals.institution = result.rows[0].institution;
-  const authn_courses = result.rows[0].courses || [];
-  const authn_course_instances = result.rows[0].course_instances || [];
   const permissions_course = result.rows[0].permissions_course;
   res.locals.authz_data = {
     authn_user: _.cloneDeep(res.locals.authn_user),
@@ -58,8 +60,6 @@ module.exports = asyncHandler(async (req, res, next) => {
     authn_has_course_permission_view: permissions_course.has_course_permission_view,
     authn_has_course_permission_edit: permissions_course.has_course_permission_edit,
     authn_has_course_permission_own: permissions_course.has_course_permission_own,
-    authn_courses: authn_courses,
-    authn_course_instances: authn_course_instances,
     user: _.cloneDeep(res.locals.authn_user),
     mode: result.rows[0].mode,
     is_administrator: res.locals.is_administrator,
@@ -68,11 +68,6 @@ module.exports = asyncHandler(async (req, res, next) => {
     has_course_permission_view: permissions_course.has_course_permission_view,
     has_course_permission_edit: permissions_course.has_course_permission_edit,
     has_course_permission_own: permissions_course.has_course_permission_own,
-    courses: authn_courses,
-    course_instances: authn_course_instances,
-    editable_courses: authn_courses.filter(
-      (course) => course.permissions_course.has_course_permission_edit,
-    ),
   };
   res.locals.user = res.locals.authz_data.user;
   if (isCourseInstance) {
@@ -173,14 +168,15 @@ module.exports = asyncHandler(async (req, res, next) => {
       res.clearCookie(override.cookie);
     });
 
-    let err = error.make(403, 'Access denied');
-    err.info = html`
-      <p>
-        You must be a member of the course staff in order to change the effective user. All
-        requested changes to the effective user have been removed.
-      </p>
-    `.toString();
-    throw err;
+    throw new AugmentedError('Access denied', {
+      status: 403,
+      info: html`
+        <p>
+          You must be a member of the course staff in order to change the effective user. All
+          requested changes to the effective user have been removed.
+        </p>
+      `,
+    });
   }
 
   // We are trying to override the user data.
@@ -205,40 +201,42 @@ module.exports = asyncHandler(async (req, res, next) => {
         res.clearCookie(override.cookie);
       });
 
-      let err = error.make(403, 'Access denied');
-      err.info = html`
-        <p>
-          You have tried to change the effective user to one with uid
-          <code>${req.cookies.pl_requested_uid}</code>, when no such user exists. All requested
-          changes to the effective user have been removed.
-        </p>
-      `.toString();
-
-      if (config.devMode && is_administrator) {
-        err.info += html`
-          <div class="alert alert-warning" role="alert">
-            <p>
-              In Development Mode,
-              <a href="/pl/administrator/query/select_or_insert_user">go here to add the user</a>
-              first and then try the emulation again.
-            </p>
-          </div>
-        `.toString();
-        if (isCourseInstance) {
-          err.info += html`
-            <p>
-              To auto-generate many users for testing, see
-              <a href="/pl/administrator/query/generate_and_enroll_users"
-                >Generate random users and enroll them in a course instance</a
-              >
-              <br />
-              (Hint your course_instance_id is
-              <strong>${res.locals.course_instance.id}</strong>)
-            </p>
-          `.toString();
-        }
-      }
-      throw err;
+      throw new AugmentedError('Access denied', {
+        status: 403,
+        info: html`
+          <p>
+            You have tried to change the effective user to one with uid
+            <code>${req.cookies.pl_requested_uid}</code>, when no such user exists. All requested
+            changes to the effective user have been removed.
+          </p>
+          ${config.devMode && is_administrator
+            ? html`
+                <div class="alert alert-warning" role="alert">
+                  <p>
+                    In Development Mode,
+                    <a href="/pl/administrator/query/select_or_insert_user"
+                      >go here to add the user</a
+                    >
+                    first and then try the emulation again.
+                  </p>
+                </div>
+                ${isCourseInstance
+                  ? html`
+                      <p>
+                        To auto-generate many users for testing, see
+                        <a href="/pl/administrator/query/generate_and_enroll_users"
+                          >Generate random users and enroll them in a course instance</a
+                        >
+                        <br />
+                        (Hint your course_instance_id is
+                        <strong>${res.locals.course_instance.id}</strong>)
+                      </p>
+                    `
+                  : ''}
+              `
+            : ''}
+        `,
+      });
     }
 
     // The effective user is an administrator and the authn user is not - remove
@@ -249,14 +247,15 @@ module.exports = asyncHandler(async (req, res, next) => {
         res.clearCookie(override.cookie);
       });
 
-      let err = error.make(403, 'Access denied');
-      err.info = html`
-        <p>
-          You have tried to change the effective user to one who is an administrator, when you are
-          not an administrator. All requested changes to the effective user have been removed.
-        </p>
-      `.toString();
-      throw err;
+      throw new AugmentedError('Access denied', {
+        status: 403,
+        info: html`
+          <p>
+            You have tried to change the effective user to one who is an administrator, when you are
+            not an administrator. All requested changes to the effective user have been removed.
+          </p>
+        `,
+      });
     }
 
     user = _.cloneDeep(result.rows[0].user);
@@ -279,15 +278,16 @@ module.exports = asyncHandler(async (req, res, next) => {
         res.clearCookie(override.cookie);
       });
 
-      let err = error.make(403, 'Access denied');
-      err.info = html`
-        <p>
-          You have requested an invalid effective date:
-          <code>${req.cookies.pl_requested_date}</code>. All requested changes to the effective user
-          have been removed.
-        </p>
-      `.toString();
-      throw err;
+      throw new AugmentedError('Access denied', {
+        status: 403,
+        info: html`
+          <p>
+            You have requested an invalid effective date:
+            <code>${req.cookies.pl_requested_date}</code>. All requested changes to the effective
+            user have been removed.
+          </p>
+        `,
+      });
     }
 
     debug(`effective req_date = ${req_date}`);
@@ -297,10 +297,10 @@ module.exports = asyncHandler(async (req, res, next) => {
     user_id: user.user_id,
     course_id: req.params.course_id || null,
     course_instance_id: req.params.course_instance_id || null,
-    is_administrator: is_administrator,
+    is_administrator,
     allow_example_course_override: false,
     ip: req.ip,
-    req_date: req_date,
+    req_date,
     req_mode: req.cookies.pl_requested_mode || res.locals.authz_data.mode,
     req_course_role: req.cookies.pl_requested_course_role || null,
     req_course_instance_role: req.cookies.pl_requested_course_instance_role || null,
@@ -326,10 +326,6 @@ module.exports = asyncHandler(async (req, res, next) => {
     res.locals.authz_data.has_course_permission_view = false;
     res.locals.authz_data.has_course_permission_edit = false;
     res.locals.authz_data.has_course_permission_own = false;
-
-    res.locals.authz_data.courses = [];
-    res.locals.authz_data.course_instances = [];
-    res.locals.authz_data.editable_courses = [];
 
     if (isCourseInstance) {
       res.locals.authz_data.course_instance_role = 'None';
@@ -367,14 +363,15 @@ module.exports = asyncHandler(async (req, res, next) => {
       res.clearCookie(override.cookie);
     });
 
-    let err = error.make(403, 'Access denied');
-    err.info = html`
-      <p>
-        You have tried to change the effective user to one who is a course previewer, when you are
-        not a course previewer. All requested changes to the effective user have been removed.
-      </p>
-    `.toString();
-    throw err;
+    throw new AugmentedError('Access denied', {
+      status: 403,
+      info: html`
+        <p>
+          You have tried to change the effective user to one who is a course previewer, when you are
+          not a course previewer. All requested changes to the effective user have been removed.
+        </p>
+      `,
+    });
   }
 
   // The effective user is a Viewer and the authn_user is not - remove
@@ -388,14 +385,15 @@ module.exports = asyncHandler(async (req, res, next) => {
       res.clearCookie(override.cookie);
     });
 
-    let err = error.make(403, 'Access denied');
-    err.info = html`
-      <p>
-        You have tried to change the effective user to one who is a course viewer, when you are not
-        a course viewer. All requested changes to the effective user have been removed.
-      </p>
-    `.toString();
-    throw err;
+    throw new AugmentedError('Access denied', {
+      status: 403,
+      info: html`
+        <p>
+          You have tried to change the effective user to one who is a course viewer, when you are
+          not a course viewer. All requested changes to the effective user have been removed.
+        </p>
+      `,
+    });
   }
 
   // The effective user is an Editor and the authn_user is not - remove
@@ -409,14 +407,15 @@ module.exports = asyncHandler(async (req, res, next) => {
       res.clearCookie(override.cookie);
     });
 
-    let err = error.make(403, 'Access denied');
-    err.info = html`
-      <p>
-        You have tried to change the effective user to one who is a course editor, when you are not
-        a course editor. All requested changes to the effective user have been removed.
-      </p>
-    `.toString();
-    throw err;
+    throw new AugmentedError('Access denied', {
+      status: 403,
+      info: html`
+        <p>
+          You have tried to change the effective user to one who is a course editor, when you are
+          not a course editor. All requested changes to the effective user have been removed.
+        </p>
+      `,
+    });
   }
 
   // The effective user is an Owner and the authn_user is not - remove
@@ -430,14 +429,15 @@ module.exports = asyncHandler(async (req, res, next) => {
       res.clearCookie(override.cookie);
     });
 
-    let err = error.make(403, 'Access denied');
-    err.info = html`
-      <p>
-        You have tried to change the effective user to one who is a course owner, when you are not a
-        course owner. All requested changes to the effective user have been removed.
-      </p>
-    `.toString();
-    throw err;
+    throw new AugmentedError('Access denied', {
+      status: 403,
+      info: html`
+        <p>
+          You have tried to change the effective user to one who is a course owner, when you are not
+          a course owner. All requested changes to the effective user have been removed.
+        </p>
+      `,
+    });
   }
 
   if (isCourseInstance) {
@@ -452,16 +452,16 @@ module.exports = asyncHandler(async (req, res, next) => {
         res.clearCookie(override.cookie);
       });
 
-      let err = error.make(403, 'Access denied');
-      err.info = html`
-        <p>
-          You have tried to change the effective user to one who can view student data in the course
-          instance <code>${res.locals.course_instance.short_name}</code>, when you do not have
-          permission to view these student data. All requested changes to the effective user have
-          been removed.
-        </p>
-      `.toString();
-      throw err;
+      throw new AugmentedError('Access denied', {
+        status: 403,
+        info: html`
+          <p>
+            You have tried to change the effective user to one who is a student data viewer in the
+            course instance <code>${res.locals.course_instance.short_name}</code>, when you are not
+            a student data viewer. All requested changes to the effective user have been removed.
+          </p>
+        `,
+      });
     }
 
     // The effective user is a Student Data Editor and the authn_user is not -
@@ -475,16 +475,16 @@ module.exports = asyncHandler(async (req, res, next) => {
         res.clearCookie(override.cookie);
       });
 
-      let err = error.make(403, 'Access denied');
-      err.info = html`
-        <p>
-          You have tried to change the effective user to one who can edit student data in the course
-          instance <code>${res.locals.course_instance.short_name}</code>, when you do not have
-          permission to edit these student data. All requested changes to the effective user have
-          been removed.
-        </p>
-      `.toString();
-      throw err;
+      throw new AugmentedError('Access denied', {
+        status: 403,
+        info: html`
+          <p>
+            You have tried to change the effective user to one who is a student data editor in the
+            course instance <code>${res.locals.course_instance.short_name}</code>, when you are not
+            a student data editor. All requested changes to the effective user have been removed.
+          </p>
+        `,
+      });
     }
 
     // The effective user is a student (with no course or course instance role prior to
@@ -504,16 +504,18 @@ module.exports = asyncHandler(async (req, res, next) => {
         res.clearCookie(override.cookie);
       });
 
-      let err = error.make(403, 'Access denied');
-      err.info = html`
-        <p>
-          You have tried to change the effective user to one who is a student in the course instance
-          <code>${res.locals.course_instance.short_name}</code>, when you do not have permission to
-          edit student data in this course instance. All requested changes to the effective user
-          have been removed.
-        </p>
-      `.toString();
-      throw err;
+      throw new AugmentedError('Access denied', {
+        status: 403,
+        info: html`
+          <p>
+            You have tried to change the effective user to one who is a student in the course
+            instance
+            <code>${res.locals.course_instance.short_name}</code>, when you do not have permission
+            to edit student data in this course instance. All requested changes to the effective
+            user have been removed.
+          </p>
+        `,
+      });
     }
 
     // The effective user is not enrolled in the course instance and is also not
@@ -534,14 +536,15 @@ module.exports = asyncHandler(async (req, res, next) => {
         res.clearCookie(override.cookie);
       });
 
-      let err = error.make(403, 'Access denied');
-      err.info = html`
-        <p>
-          You have tried to change the effective user to one who is not enrolled in this course
-          instance. All required changes to the effective user have been removed.
-        </p>
-      `.toString();
-      throw err;
+      throw new AugmentedError('Access denied', {
+        status: 403,
+        info: html`
+          <p>
+            You have tried to change the effective user to one who is not enrolled in this course
+            instance. All required changes to the effective user have been removed.
+          </p>
+        `,
+      });
     }
   }
 
@@ -556,35 +559,6 @@ module.exports = asyncHandler(async (req, res, next) => {
     effectiveResult.rows[0].permissions_course.has_course_permission_edit;
   res.locals.authz_data.has_course_permission_own =
     effectiveResult.rows[0].permissions_course.has_course_permission_own;
-
-  // Effective users are confined to one course, so we discard all other
-  // courses from the list of those to which the effective user has staff
-  // access.
-  //
-  // Note that courses[0].permissions_course and course.permissions_course
-  // will not, in general, be the same. Requested course and course instance
-  // roles are ignored when generating the former but not when generating
-  // the latter. So, we also replace permissions_course for the course that
-  // remains in the list (the current course) with what it should be.
-  //
-  // We then update editable_courses as usual.
-  res.locals.authz_data.courses = (effectiveResult.rows[0].courses || []).filter((course) =>
-    idsEqual(course.id, effectiveResult.rows[0].course.id),
-  );
-  res.locals.authz_data.courses.forEach(
-    (course) =>
-      (course.permissions_course = _.cloneDeep(effectiveResult.rows[0].permissions_course)),
-  );
-  res.locals.authz_data.editable_courses = res.locals.authz_data.courses.filter(
-    (course) => course.permissions_course.has_course_permission_edit,
-  );
-
-  // Use the course_instances for the effective user, but keeping only
-  // those ones for which the authn user also has access.
-  res.locals.authz_data.course_instances = effectiveResult.rows[0].course_instances || [];
-  res.locals.authz_data.course_instances = res.locals.authz_data.course_instances.filter((ci) =>
-    res.locals.authz_data.authn_course_instances.some((authn_ci) => idsEqual(authn_ci.id, ci.id)),
-  );
 
   if (isCourseInstance) {
     res.locals.authz_data.course_instance_role =

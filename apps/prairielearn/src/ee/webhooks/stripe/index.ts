@@ -1,7 +1,7 @@
 import express = require('express');
 import asyncHandler = require('express-async-handler');
 import Stripe from 'stripe';
-import error = require('@prairielearn/error');
+import * as error from '@prairielearn/error';
 import { runInTransactionAsync } from '@prairielearn/postgres';
 
 import { config } from '../../../lib/config';
@@ -71,7 +71,7 @@ async function handleSessionUpdate(session: Stripe.Checkout.Session) {
             plan_name: planName,
             type: 'stripe',
             institution_id: institution.id,
-            course_instance_id: course_instance_id,
+            course_instance_id,
             user_id: subject_user_id,
           },
           authn_user_id: localSession.agent_user_id,

@@ -1,10 +1,11 @@
 import { Router } from 'express';
+import asyncHandler = require('express-async-handler');
+import * as error from '@prairielearn/error';
 import { QuestionsPage } from './publicQuestions.html';
 import { selectPublicQuestionsForCourse } from '../../models/questions';
 import { selectCourseById } from '../../models/course';
-import asyncHandler = require('express-async-handler');
 import { features } from '../../lib/features/index';
-import error = require('@prairielearn/error');
+
 const router = Router({ mergeParams: true });
 
 router.get(
@@ -23,7 +24,7 @@ router.get(
     const questions = await selectPublicQuestionsForCourse(res.locals.course.id);
     res.send(
       QuestionsPage({
-        questions: questions,
+        questions,
         showAddQuestionButton: false,
         resLocals: res.locals,
       }),

@@ -1,3 +1,5 @@
+import { type RootHookObject } from 'mocha';
+
 import { createTemplate, dropTemplate } from './helperDb';
 
 export async function mochaGlobalSetup() {
@@ -12,13 +14,11 @@ export async function mochaGlobalTeardown() {
 }
 
 /**
- * @type {import('mocha').RootHookObject}
- *
  * These hooks run once per worker when Mocha is running in parallel mode.
  * We take advantage of this to create a separate database for each worker.
  */
-export const mochaHooks = {
-  beforeAll: async function () {
+export const mochaHooks: RootHookObject = {
+  async beforeAll() {
     const logger = await import('@prairielearn/logger');
 
     const consoleTransport = logger.logger.transports.find(

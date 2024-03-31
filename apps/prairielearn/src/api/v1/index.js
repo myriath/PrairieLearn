@@ -1,6 +1,7 @@
 const express = require('express');
 
 const error = require('@prairielearn/error');
+const Sentry = require('@prairielearn/sentry');
 
 const router = express.Router();
 
@@ -11,11 +12,7 @@ const router = express.Router();
  */
 function authzHasCourseInstanceView(req, res, next) {
   if (!res.locals.authz_data.has_course_instance_permission_view) {
-    return next(
-      error.make(403, 'Requires student data view access', {
-        locals: res.locals,
-      }),
-    );
+    return next(error.make(403, 'Requires student data view access'));
   }
   next();
 }
@@ -62,7 +59,10 @@ router.use(
 // If no earlier routes matched, 404 the route
 router.use(require('./notFound'));
 
-// Handle errors independently from the normal PL eror handling
+// The Sentry error handler must come before our own.
+router.use(Sentry.Handlers.errorHandler());
+
+// Handle errors independently from the normal PL error handling
 router.use(require('./error'));
 
 module.exports = router;
